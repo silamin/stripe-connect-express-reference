@@ -1,5 +1,10 @@
 # Stripe Connect — Express accounts, destination charges, application fees
 
+[![CI](https://github.com/silamin/stripe-connect-express-reference/actions/workflows/ci.yml/badge.svg)](https://github.com/silamin/stripe-connect-express-reference/actions/workflows/ci.yml)
+
+**Live:** https://stripe-connect-express-reference.onrender.com — test mode, free tier, so
+the first request after an idle period takes ~30 s to wake.
+
 A small, deliberately readable reference integration. It exists to cover four specific
 things end-to-end, because those four are exactly what gets asked about in interviews
 and proposals:
@@ -18,9 +23,17 @@ Built against Stripe's own documentation (`/connect/express-accounts`,
 
 **I did not touch your API keys, and I won't.** Handling keys or credentials is a hard
 line. This app reads `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` from the environment
-and nothing else; `config.ts` refuses to boot if they're absent or still say `REPLACE_ME`.
-The same applies to enabling Connect on the account — that's a settings change on your own
-Stripe account and it's yours to make.
+and nothing else; `config.ts` refuses to boot unless each one has the *shape* of a real
+secret — right prefix, alphanumeric body, plausible length. It also refuses a `sk_live_` or
+`rk_live_` key outright. The same applies to enabling Connect on the account — that's a
+settings change on your own Stripe account and it's yours to make.
+
+> **Why shape and not a placeholder blacklist.** The first version of this guard listed the
+> placeholder spellings it knew about, and so was silently fine with every new one. It let
+> `whsec_TEMPORARY_replace_after_first_deploy` through — the placeholder this file's own
+> deploy section tells you to use — and the server came up clean and then rejected every
+> real Stripe event as a signature failure. A checker that enumerates what *fails* can
+> always be got round by a value nobody thought of. This one enumerates what passes.
 
 Three steps, all in **test mode**, roughly ten minutes:
 
@@ -99,7 +112,47 @@ and `charges_enabled` never flips — because nothing ever asked.
 ### One ordering bug worth knowing
 The webhook route is mounted **before** `express.json()`. Signature verification needs the
 raw body; if the JSON parser runs first, every signature fails with an error that never
-mentions body parsing. Verified: posting a bad signature returns `400`.
+mentions body parsing.
+
+⚠ **And "a bad signature returns 400" does not prove this.** It returns 400 either way —
+the request is rejected whether the raw body survived or not. The mount order is only
+proved by the *positive* case: a **validly** signed payload must be **accepted**, and a
+validly signed payload mutated by one byte in transit must be **rejected**. Both are in the
+suite, and moving `express.json()` above the route makes them fail while the bad-signature
+tests stay green. See below.
+
+### Webhooks arrive at least once
+Stripe retries on non-2xx and can deliver the same event more than once. The
+`account.updated` handler is idempotent by construction — it *overwrites* cached state from
+the event payload rather than mutating it incrementally — so redelivery converges instead
+of drifting. That is a property worth pinning rather than assuming, because the obvious
+"improvement" (counting, appending, incrementing) would quietly break it. There is a test.
+
+---
+
+## Verified, not asserted
+
+```bash
+npm run check      # typecheck + tests
+```
+
+**30 tests, no network, no Stripe key required** — the suite drives the real Express app
+with supertest and signs its own webhook payloads locally, so it runs on a fork's pull
+request where review actually happens.
+
+| What it pins | Why it exists |
+|---|---|
+| All three onboarding conditions, each failing alone | The `return_url` trap: `charges_enabled` and `details_submitted` both true, one outstanding requirement, and the next payment fails |
+| `toSellerState` defaults every boolean on a sparse payload | Accounts v2 accounts can come back through the v1 retrieve with fields absent; `?? false` must stay a decision, not a coincidence |
+| A validly-signed webhook is **accepted** and lands in the store | The half a bad-signature test cannot reach |
+| A signed-then-mutated payload is **rejected** | The only test that actually proves the raw body survived the middleware |
+| Redelivery of the same event is idempotent | Stripe delivers at least once |
+| Application fee floors, and never exceeds the charge total | It is money |
+| Boot refuses a live key, a sub-2% fee, and every placeholder shape | Each refusal is a claim about money or safety |
+
+These were checked by **mutation**, not by watching them go green: moving `express.json()`
+above the webhook route fails 4 tests, and dropping `currently_due` from the gate fails 2.
+A test that cannot fail is documentation with a green tick on it.
 
 ---
 

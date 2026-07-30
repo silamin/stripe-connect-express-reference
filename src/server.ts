@@ -158,10 +158,18 @@ async function seed() {
   }
 }
 
-app.listen(config.port, () => {
-  console.log(`▸ Connect reference running on ${config.appUrl}`)
-  console.log(`▸ Platform fee: ${config.platformFeeBps / 100}%  (platform pays Stripe's fee on destination charges)`)
-  console.log(`▸ Currency:   ${config.defaultCurrency.toUpperCase()}`)
-  console.log(`▸ Webhooks:  stripe listen --forward-to localhost:${config.port}/webhook`)
-  void seed()
-})
+/* Exported so the test suite can drive the real routes with supertest rather
+ * than a reconstructed copy of them — a webhook test against a rebuilt app
+ * would prove nothing about THIS app's middleware order, which is the thing
+ * most worth proving here. */
+export { app }
+
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(config.port, () => {
+    console.log(`▸ Connect reference running on ${config.appUrl}`)
+    console.log(`▸ Platform fee: ${config.platformFeeBps / 100}%  (platform pays Stripe's fee on destination charges)`)
+    console.log(`▸ Currency:   ${config.defaultCurrency.toUpperCase()}`)
+    console.log(`▸ Webhooks:  stripe listen --forward-to localhost:${config.port}/webhook`)
+    void seed()
+  })
+}

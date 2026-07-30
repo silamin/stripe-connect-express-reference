@@ -1,15 +1,49 @@
 import 'dotenv/config'
 
+/**
+ * Secrets are validated by SHAPE — what a real value looks like — not by
+ * blacklisting placeholder spellings.
+ *
+ * The blacklist this replaces was `/REPLACE_ME|PASTE_|_HERE$|^sk_test_REPLACE|
+ * ^whsec_REPLACE/i`, and it had the defect every blacklist has: it enumerated
+ * the ways a value could be WRONG, so each new placeholder spelling was silently
+ * fine. It missed `whsec_TEMPORARY_replace_after_first_deploy` — the exact
+ * placeholder this repo's own deploy notes tell you to use — which meant the
+ * server booted happily with an unusable webhook secret and then rejected every
+ * real Stripe event as a signature failure. That is precisely the opaque
+ * downstream failure the guard existed to prevent.
+ *
+ * Stripe's keys and signing secrets are a prefix plus an alphanumeric body, so
+ * "starts with the right prefix and the rest is alphanumeric and long enough"
+ * accepts every real value and rejects anything hand-written — including
+ * placeholders nobody has thought of yet.
+ */
+const SECRET_SHAPES: Record<string, { pattern: RegExp; looksLike: string }> = {
+  STRIPE_SECRET_KEY: {
+    pattern: /^(sk|rk)_(test|live)_[A-Za-z0-9]{16,}$/,
+    looksLike: 'sk_test_… (Dashboard → Developers → API keys, with the sandbox selected)',
+  },
+  STRIPE_WEBHOOK_SECRET: {
+    pattern: /^whsec_[A-Za-z0-9]{16,}$/,
+    looksLike: 'whsec_… (from `stripe listen`, or the destination\'s signing secret in the Dashboard)',
+  },
+}
+
 function required(name: string): string {
-  const v = process.env[name]
-  // Catch every placeholder shape used in .env / .env.example. My own fault:
-  // .env.example said REPLACE_ME while the generated .env said PASTE_..._HERE,
-  // so an unfilled .env sailed past this guard and failed later as an opaque
-  // "Invalid API Key" from Stripe instead of a clear message here.
-  const placeholder = /REPLACE_ME|PASTE_|_HERE$|^sk_test_REPLACE|^whsec_REPLACE/i
-  if (!v || placeholder.test(v)) {
+  const v = process.env[name]?.trim()
+  if (!v) {
     throw new Error(
       `Missing env var ${name}. Copy .env.example to .env and fill it in. ` +
+      `This app reads keys from the environment only — never from source.`
+    )
+  }
+
+  const shape = SECRET_SHAPES[name]
+  if (shape && !shape.pattern.test(v)) {
+    throw new Error(
+      `Missing env var ${name}: the value present is not a real secret — it is a ` +
+      `placeholder or a typo, so it would fail later as an opaque error from Stripe ` +
+      `rather than here.\nExpected something of the form ${shape.looksLike}\n` +
       `This app reads keys from the environment only — never from source.`
     )
   }
