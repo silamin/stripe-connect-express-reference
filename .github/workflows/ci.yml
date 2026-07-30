@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: typecheck + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # No secrets are needed and none are configured. The suite drives the real
+      # Express app and signs its own webhook payloads with a local test secret,
+      # so it never reaches Stripe's API. A suite that needed a live key could not
+      # run on a fork's pull request, which is where review happens.
+      - name: Tests
+        run: npm test
