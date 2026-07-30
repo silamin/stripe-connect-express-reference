@@ -1,0 +1,7 @@
+node_modules/
+dist/
+# NEVER commit real keys. Stripe scans public repos for sk_/rk_ and will
+# deactivate what it finds.
+.env
+.env.*
+!.env.example

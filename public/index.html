@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stripe Connect — Express + destination charges</title>
+<style>
+:root{--ink:#0d1117;--mut:#5b6472;--line:#e3e7ec;--ok:#0a7c42;--warn:#9a5b00;--bad:#b3261e;--acc:#3d5afe}
+*{box-sizing:border-box}body{margin:0;padding:2.5rem 1.25rem;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;color:var(--ink);background:#fbfcfd}
+main{max-width:820px;margin:0 auto}h1{font-size:1.45rem;margin:0 0 .3rem}h2{font-size:1rem;margin:2.2rem 0 .7rem;letter-spacing:.01em}
+p.sub{color:var(--mut);margin:0 0 2rem}
+.card{border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.2rem;background:#fff;margin-bottom:.7rem}
+label{display:block;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin-bottom:.3rem}
+input{width:100%;padding:.55rem .7rem;border:1px solid var(--line);border-radius:8px;font:inherit;margin-bottom:.7rem}
+button{padding:.55rem 1rem;border:0;border-radius:8px;background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+button.ghost{background:#fff;color:var(--acc);border:1px solid var(--acc)}
+button:disabled{opacity:.4;cursor:not-allowed}
+.row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.pill{display:inline-block;padding:.1rem .5rem;border-radius:99px;font-size:.72rem;font-weight:600}
+.ok{background:#e6f4ec;color:var(--ok)}.warn{background:#fdf1e0;color:var(--warn)}.bad{background:#fdeceb;color:var(--bad)}
+code{background:#f2f4f7;padding:.1rem .35rem;border-radius:5px;font-size:.85em}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;color:var(--mut)}
+.note{border-left:3px solid var(--acc);padding:.1rem 0 .1rem .8rem;color:var(--mut);font-size:.88rem;margin:.9rem 0}
+</style></head><body><main>
+<h1>Stripe Connect — Express accounts, destination charges, application fees</h1>
+<p class="sub">A reference integration in test mode. Sellers onboard as Express connected accounts; buyers pay on the platform; funds land on the seller and the platform keeps an application fee.</p>
+
+<div class="note"><strong>The point of this demo:</strong> there is no single Stripe field meaning “onboarding is done.” The <code>return_url</code> redirect only means the flow was entered and exited. A seller is ready only when <code>charges_enabled</code> and <code>details_submitted</code> are true <em>and</em> <code>requirements.currently_due</code> is empty. This UI shows all three separately, on purpose.</div>
+
+<h2>1 · Onboard a seller</h2>
+<div class="card">
+  <label for="name">Seller display name</label>
+  <input id="name" placeholder="Nordic Ceramics ApS">
+  <label for="country">Country (2-letter)</label>
+  <input id="country" value="DK" maxlength="2">
+  <button id="create">Create Express account &amp; onboard</button>
+</div>
+
+<h2>1b · Or adopt the account you already made</h2>
+<div class="card">
+  <p class="mono" style="margin-top:0">Your sandbox account from the Dashboard is loaded automatically on boot via <code>SEED_ACCOUNT_ID</code>. Use this only to add another.</p>
+  <label for="imp">Existing connected account id</label>
+  <input id="imp" placeholder="acct_...">
+  <button class="ghost" id="import">Import</button>
+</div>
+
+<h2>2 · Sellers</h2>
+<div id="sellers"></div>
+
+<h2>3 · Take a payment</h2>
+<div class="card">
+  <label for="acct">Seller account id</label>
+  <input id="acct" placeholder="acct_...">
+  <label for="prod">Item</label>
+  <input id="prod" value="Handmade vase">
+  <label for="amt">Amount (minor units — 2500 = 25,00 kr)</label>
+  <input id="amt" value="2500" type="number">
+  <button id="pay">Pay with Checkout</button>
+  <p class="mono" id="feeHint"></p>
+</div>
+<script>
+const $=s=>document.querySelector(s)
+const bool=(v,t)=>`<span class="pill ${v?'ok':'bad'}">${t}: ${v}</span>`
+async function load(){
+  const r=await fetch('/api/sellers'); const list=await r.json()
+  $('#sellers').innerHTML = list.length? list.map(s=>`
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <strong>${s.displayName}</strong>
+        <span class="pill ${s.canAcceptPayments?'ok':'warn'}">${s.canAcceptPayments?'READY':'NOT READY'}</span>
+      </div>
+      <p class="mono">${s.accountId}</p>
+      <div class="row">${bool(s.chargesEnabled,'charges_enabled')}${bool(s.payoutsEnabled,'payouts_enabled')}${bool(s.detailsSubmitted,'details_submitted')}</div>
+      ${s.currentlyDue.length?`<p class="mono">currently_due: ${s.currentlyDue.join(', ')}</p>`:''}
+      ${s.disabledReason?`<p class="mono">disabled_reason: ${s.disabledReason}</p>`:''}
+      <div class="row" style="margin-top:.6rem">
+        <button class="ghost" onclick="relink('${s.accountId}')">Continue onboarding</button>
+        <button class="ghost" onclick="refresh('${s.accountId}')">Re-check with Stripe</button>
+      </div>
+    </div>`).join('') : '<div class="card"><em>No sellers yet.</em></div>'
+}
+async function relink(id){const r=await fetch(`/api/sellers/${id}/onboarding-link`,{method:'POST'});const j=await r.json();if(j.url)location=j.url;else alert(j.error)}
+async function refresh(id){await fetch(`/api/sellers/${id}`);load()}
+$('#create').onclick=async()=>{
+  const r=await fetch('/api/sellers',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({displayName:$('#name').value||'Demo Seller',country:($('#country').value||'DK').toUpperCase()})})
+  const j=await r.json(); if(j.onboardingUrl) location=j.onboardingUrl; else alert(j.error)
+}
+$('#import').onclick=async()=>{
+  const r=await fetch('/api/sellers/import',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({accountId:$('#imp').value.trim()})})
+  const j=await r.json(); if(j.error) alert(j.error); else load()
+}
+$('#pay').onclick=async()=>{
+  const r=await fetch('/api/checkout',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({accountId:$('#acct').value.trim(),productName:$('#prod').value,amount:Number($('#amt').value)})})
+  const j=await r.json(); if(j.url) location=j.url; else alert(j.error)
+}
+$('#amt').oninput=()=>{const a=Number($('#amt').value||0);$('#feeHint').textContent=`Platform fee at 10%: ${Math.floor(a*0.10)} minor units (${(Math.floor(a*0.10)/100).toFixed(2)} kr). Stripe's fee comes out of the PLATFORM balance, not the seller's.`}
+$('#amt').oninput()
+load()
+</script>
+</main></body></html>
